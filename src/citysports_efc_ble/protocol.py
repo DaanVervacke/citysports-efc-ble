@@ -6,7 +6,8 @@ every earlier byte.
 """
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Final
 
 from .const import (
     COMMAND_CONTROL,
@@ -42,7 +43,9 @@ from .models import (
     WorkoutState,
 )
 
-_PAYLOAD_LENGTHS = {
+__all__ = ["is_efc_advertisement", "parse_frame"]
+
+_PAYLOAD_LENGTHS: Final[Mapping[int, int]] = {
     FRAME_STATUS: 9,
     FRAME_COUNTERS: 12,
     FRAME_SPORT_RECORD: 16,
@@ -85,9 +88,11 @@ def kmh_to_speed(kmh: float, imperial: bool) -> int:
     """Convert km/h to the nearest speed byte (0.1 km/h or 0.1 mph steps).
 
     Raises:
-        EfcValidationError: The value is not finite or does not fit in
-            one byte.
+        EfcValidationError: The value is not a number, is not finite or
+            does not fit in one byte.
     """
+    if isinstance(kmh, bool) or not isinstance(kmh, int | float):
+        raise EfcValidationError("Speed must be a number")
     if not math.isfinite(kmh):
         raise EfcValidationError("Speed must be a finite number")
     raw = round(kmh * 10 / KM_PER_MILE) if imperial else round(kmh * 10)
@@ -107,12 +112,18 @@ def start_command() -> bytes:
 
 
 def pause_command() -> bytes:
-    """Build the pause command."""
+    """Build the pause command, ``A1 03 01 03 A0``.
+
+    The bytes come from the Trught notes. Untested on real hardware.
+    """
     return encode_command(COMMAND_CONTROL, bytes((CONTROL_PAUSE,)))
 
 
 def stop_command() -> bytes:
-    """Build the stop command."""
+    """Build the stop command, ``A1 03 01 05 A6``.
+
+    The treadmill shows the workout summary and slows the belt down.
+    """
     return encode_command(COMMAND_CONTROL, bytes((CONTROL_STOP,)))
 
 
@@ -127,7 +138,11 @@ def incline_command(percent: int) -> bytes:
 
 
 def sport_record_query() -> bytes:
-    """Build the sport record query."""
+    """Build the sport record query, ``A1 04 05 01 00 00 00 01 A0``.
+
+    The bytes come from the Trught notes. The treadmill answers with a
+    ``1A 04`` sport record frame.
+    """
     return encode_command(COMMAND_SPORT_RECORD, bytes((0x01, 0x00, 0x00, 0x00, 0x01)))
 
 
@@ -148,9 +163,11 @@ def parse_frame(data: bytes) -> EfcFrame:
     if len(data) < 4:
         raise EfcProtocolError("EFC frame is shorter than 4 bytes")
     if len(data) > MAX_FRAME_BYTES:
-        raise EfcProtocolError("EFC frame is longer than 20 bytes")
+        raise EfcProtocolError(f"EFC frame is longer than {MAX_FRAME_BYTES} bytes")
     if data[0] != INBOUND_HEADER:
-        raise EfcProtocolError(f"EFC frame header is 0x{data[0]:02X}, not 0x1A")
+        raise EfcProtocolError(
+            f"EFC frame header is 0x{data[0]:02X}, not 0x{INBOUND_HEADER:02X}"
+        )
     if len(data) != data[2] + 4:
         raise EfcProtocolError("EFC frame length byte does not match its size")
     if xor_checksum(data[:-1]) != data[-1]:
@@ -166,7 +183,7 @@ def parse_frame(data: bytes) -> EfcFrame:
             f"bytes, expected {expected}"
         )
     if frame_type == FRAME_STATUS:
-        return _status(payload)
+        return _parse_status(payload)
     if frame_type == FRAME_COUNTERS:
         return CountersFrame(
             elapsed=int.from_bytes(payload[0:2]),
@@ -187,7 +204,7 @@ def parse_frame(data: bytes) -> EfcFrame:
     )
 
 
-def _status(payload: bytes) -> StatusFrame:
+def _parse_status(payload: bytes) -> StatusFrame:
     status = payload[6]
     imperial = bool(status & STATUS_IMPERIAL_BIT)
     code = status & STATUS_CODE_MASK

@@ -12,6 +12,8 @@ from dataclasses import dataclass, replace
 from .const import ELAPSED_MODULUS, ENERGY_MODULUS, STEPS_MODULUS
 from .models import CountersFrame
 
+__all__ = ["CounterTracker"]
+
 
 @dataclass(slots=True)
 class _Counter:

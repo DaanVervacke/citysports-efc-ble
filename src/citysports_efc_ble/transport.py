@@ -1,19 +1,19 @@
-"""BLE transport adapters for EFC treadmills."""
-
-from __future__ import annotations
+"""Bleak based transport for EFC treadmills."""
 
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from typing import cast
 
-import bleak
+from bleak import BleakClient
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
-from bleak_retry_connector import establish_connection
+from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
-from .client import BleTransport, DisconnectedCallback, NotificationCallback
+from .exceptions import EfcConnectionError
+from .transport_types import BleTransport, DisconnectedCallback, NotificationCallback
+
+__all__ = ["BleakTransport"]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,53 +26,61 @@ class BleakTransport(BleTransport):
         device: BLEDevice,
         *,
         timeout: float = 30.0,
-        client_factory: Callable[..., bleak.BleakClient] | None = None,
+        client_factory: type[BleakClient] | None = None,
+        ble_device_callback: Callable[[], BLEDevice] | None = None,
     ) -> None:
         """Initialize the transport.
 
         Args:
             device: The BLE device to connect to.
             timeout: Connection timeout in seconds.
-            client_factory: Overrides the Bleak client class, for tests.
+            client_factory: The Bleak client class. Defaults to
+                ``BleakClientWithServiceCache``.
+            ble_device_callback: Returns the latest ``BLEDevice`` for
+                connection retries. Home Assistant passes a lookup in its
+                Bluetooth manager here.
         """
         self.device = device
         self.timeout = timeout
-        self._client_factory = (
-            client_factory if client_factory is not None else bleak.BleakClient
+        self._client_class: type[BleakClient] = (
+            client_factory
+            if client_factory is not None
+            else BleakClientWithServiceCache
         )
-        self._client: bleak.BleakClient | None = None
+        self._ble_device_callback = ble_device_callback
+        self._client: BleakClient | None = None
+        self._disconnected_callback: DisconnectedCallback | None = None
         self._notification_tasks: set[asyncio.Task[None]] = set()
         self._accept_notifications = True
 
     @property
-    def client(self) -> bleak.BleakClient:
+    def client(self) -> BleakClient:
         """The connected Bleak client.
 
         Raises:
-            RuntimeError: The transport is not connected.
+            EfcConnectionError: The transport is not connected.
         """
         if self._client is None:
-            raise RuntimeError("EFC BLE transport is not connected")
+            raise EfcConnectionError("EFC BLE transport is not connected")
         return self._client
 
     async def connect(self, disconnected_callback: DisconnectedCallback) -> None:
-        """Connect to the device, reusing a live connection.
+        """Connect to the device. A live connection is reused.
 
         Args:
             disconnected_callback: Called when Bleak reports that the link
-                dropped.
+                dropped. A reused connection reports to the latest
+                callback.
         """
         self._accept_notifications = True
+        self._disconnected_callback = disconnected_callback
         if self._client is None or not self._client.is_connected:
-
-            def on_disconnect(_client: bleak.BleakClient) -> None:
-                disconnected_callback()
-
             self._client = await establish_connection(
-                cast(type[bleak.BleakClient], self._client_factory),
+                self._client_class,
                 self.device,
                 self.device.name or self.device.address,
-                disconnected_callback=on_disconnect,
+                disconnected_callback=self._on_disconnect,
+                ble_device_callback=self._ble_device_callback,
                 timeout=self.timeout,
             )
 
@@ -90,7 +98,14 @@ class BleakTransport(BleTransport):
     async def start_notify(
         self, characteristic: str, callback: NotificationCallback
     ) -> None:
-        """Subscribe to notifications on ``characteristic``."""
+        """Call ``callback`` with every notification on ``characteristic``.
+
+        A callback that returns an awaitable runs as a task. ``disconnect()``
+        cancels those tasks, and errors they raise are logged.
+
+        Raises:
+            EfcConnectionError: The transport is not connected.
+        """
 
         def on_notification(
             gatt_characteristic: BleakGATTCharacteristic, payload: bytearray
@@ -106,15 +121,27 @@ class BleakTransport(BleTransport):
         await self.client.start_notify(characteristic, on_notification)
 
     async def stop_notify(self, characteristic: str) -> None:
-        """Unsubscribe from notifications, keeping a dropped connection quiet."""
+        """Unsubscribe from notifications.
+
+        Does nothing when the link already dropped.
+        """
         if self._client is not None and self._client.is_connected:
             await self._client.stop_notify(characteristic)
 
     async def write_gatt_char(
         self, characteristic: str, data: bytes, response: bool = False
     ) -> None:
-        """Write ``data`` to ``characteristic``."""
+        """Write ``data`` to ``characteristic``, with or without response.
+
+        Raises:
+            EfcConnectionError: The transport is not connected.
+        """
         await self.client.write_gatt_char(characteristic, data, response=response)
+
+    def _on_disconnect(self, _client: BleakClient) -> None:
+        callback = self._disconnected_callback
+        if callback is not None:
+            callback()
 
     def _notification_task_done(self, task: asyncio.Task[None]) -> None:
         self._notification_tasks.discard(task)

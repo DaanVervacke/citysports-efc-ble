@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import pytest
 from citysports_efc_ble import (
     CountersFrame,
@@ -28,19 +26,22 @@ from citysports_efc_ble.protocol import (
     xor_checksum,
 )
 
-from .conftest import DEVICE_INFO, STATUS_STANDBY, frame, load_capture, status
+from .helpers import DEVICE_INFO, STATUS_STANDBY, frame, load_capture, status
 
 
 def test_commands_match_captured_bytes() -> None:
     assert device_info_query() == bytes.fromhex("a10500a4")
     assert start_command() == bytes.fromhex("a1030101a2")
     assert stop_command() == bytes.fromhex("a1030105a6")
-    assert pause_command() == bytes.fromhex("a1030103a0")
     assert speed_command(0x0B) == bytes.fromhex("a10102010ba8")
     assert speed_command(0x1F) == bytes.fromhex("a10102011fbc")
+
+
+def test_commands_match_trught_notes() -> None:
+    assert pause_command() == bytes.fromhex("a1030103a0")
     assert incline_command(2) == bytes.fromhex("a102020102a2")
+    assert sport_record_query() == bytes.fromhex("a104050100000001a0")
     assert sport_record_query() == encode_command(0x04, bytes.fromhex("0100000001"))
-    assert sport_record_query()[:8] == bytes.fromhex("a104050100000001")
 
 
 def test_xor_checksum() -> None:
@@ -114,8 +115,8 @@ def test_parse_sport_record_and_unknown() -> None:
     ("data", "message"),
     [
         (b"\x1a\x01", "shorter"),
-        (bytes(21), "longer"),
-        (bytes.fromhex("a10500a4"), "header"),
+        (bytes(21), "longer than 20 bytes"),
+        (bytes.fromhex("a10500a4"), "header is 0xA1, not 0x1A"),
         (bytes.fromhex("1a010500"), "length byte"),
         (STATUS_STANDBY[:-1] + b"\x00", "checksum"),
         (frame(0x01, bytes(3)), "payload bytes"),
@@ -136,6 +137,10 @@ def test_speed_conversions() -> None:
         kmh_to_speed(-1, False)
     with pytest.raises(EfcValidationError, match="one byte"):
         kmh_to_speed(30, False)
+    with pytest.raises(EfcValidationError, match="number"):
+        kmh_to_speed(True, False)
+    with pytest.raises(EfcValidationError, match="number"):
+        kmh_to_speed("3", False)  # type: ignore[arg-type]
 
 
 def test_is_efc_advertisement() -> None:

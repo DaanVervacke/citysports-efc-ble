@@ -1,9 +1,29 @@
-"""Typed EFC models."""
+"""Decoded frames, the merged treadmill state and the session status.
+
+The frame classes mirror the inbound frame types. ``EfcState`` merges them
+into one snapshot and ``EfcUpdate`` carries that snapshot to the update
+callback.
+"""
 
 from dataclasses import dataclass, replace
 from enum import IntEnum, StrEnum
+from typing import TypeAlias, assert_never
 
 from .const import KM_PER_MILE
+
+__all__ = [
+    "ConnectionStatus",
+    "CountersFrame",
+    "DeviceInfoFrame",
+    "EfcFault",
+    "EfcFrame",
+    "EfcState",
+    "EfcUpdate",
+    "SportRecordFrame",
+    "StatusFrame",
+    "UnknownFrame",
+    "WorkoutState",
+]
 
 
 class WorkoutState(IntEnum):
@@ -129,7 +149,7 @@ class UnknownFrame:
     payload: bytes
 
 
-type EfcFrame = (
+EfcFrame: TypeAlias = (  # noqa: UP040
     StatusFrame | CountersFrame | DeviceInfoFrame | SportRecordFrame | UnknownFrame
 )
 """Any decoded inbound frame."""
@@ -223,8 +243,10 @@ class EfcState:
                 )
             case SportRecordFrame():
                 return replace(self, workout_counter=frame.workout_counter)
-            case _:
+            case UnknownFrame():
                 return self
+            case _:  # pragma: no cover
+                assert_never(frame)
 
 
 @dataclass(frozen=True, slots=True)

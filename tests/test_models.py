@@ -1,15 +1,14 @@
-from __future__ import annotations
-
 from citysports_efc_ble import (
     CountersFrame,
     CounterTracker,
+    EfcFrame,
     EfcState,
     UnknownFrame,
     WorkoutState,
     parse_frame,
 )
 
-from .conftest import DEVICE_INFO, frame, status
+from .helpers import DEVICE_INFO, frame, status
 
 
 def test_state_merges_frames() -> None:
@@ -68,3 +67,8 @@ def test_tracker_reset_forgets_history() -> None:
     tracker.correct(_counters(5990, 9990, 9995))
     tracker.reset()
     assert tracker.correct(_counters(3, 5, 2)) == _counters(3, 5, 2)
+
+
+def test_efc_frame_alias_supports_isinstance() -> None:
+    assert isinstance(parse_frame(DEVICE_INFO), EfcFrame)
+    assert not isinstance(b"", EfcFrame)
