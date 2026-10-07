@@ -1,0 +1,53 @@
+name: Gate
+
+on:
+  workflow_call:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14", "3.15"]
+        resolution: [highest, lowest-direct]
+
+    continue-on-error: ${{ matrix.python-version == '3.15' }}
+
+    env:
+      UV_RESOLUTION: ${{ matrix.resolution }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: |
+          if [ "${{ matrix.resolution }}" = "lowest-direct" ]; then
+            uv lock
+          fi
+          uv sync --locked --all-groups
+
+      - name: Run check gate
+        run: uv run python -m scripts.check
+
+      - name: Build and verify wheel
+        run: |
+          uv build
+          python -c "import glob, sys, zipfile; w = glob.glob('dist/*.whl')[0]; names = zipfile.ZipFile(w).namelist(); sys.exit(0 if 'citysports_efc_ble/py.typed' in names else 'py.typed missing from wheel: ' + w)"
+          uv venv /tmp/wheel-smoke
+          uv pip install --python /tmp/wheel-smoke/bin/python dist/*.whl
+          cd /tmp && /tmp/wheel-smoke/bin/python -c "from citysports_efc_ble import EfcClient, is_efc_advertisement"

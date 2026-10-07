@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    uses: ./.github/workflows/gate.yml
+
+  build:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - name: Verify tag matches the declared version
+        run: |
+          tag="${RELEASE_TAG#v}"
+          version="$(uv version --short)"
+          if [ "${tag}" != "${version}" ]; then
+            echo "Tag ${RELEASE_TAG} does not match pyproject.toml version ${version}" >&2
+            exit 1
+          fi
+      - run: uv build
+      - name: Guard built version matches tag
+        run: |
+          tag="${RELEASE_TAG#v}"
+          wheel=$(ls dist/citysports_efc_ble-*.whl | head -1)
+          built=$(basename "$wheel" | sed -E 's/^citysports_efc_ble-([^-]+)-.*/\1/')
+          echo "tag=$tag built=$built"
+          test "$tag" = "$built"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          enable-cache: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: dist
+          path: dist/
+
+      - uses: astral-sh/attest-action@f589a42a7efb6fe400b4f400de60b4bc90390027
+
+      - run: uv publish

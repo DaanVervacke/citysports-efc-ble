@@ -1,0 +1,38 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+categories:
+  - title: Breaking changes
+    semver-increment: minor
+    when:
+      labels: [breaking-change]
+  - title: New features
+    semver-increment: minor
+    when:
+      labels: [new-feature]
+  - title: Bug fixes
+    semver-increment: patch
+    when:
+      labels: [bugfix]
+  - title: Enhancements
+    semver-increment: patch
+    when:
+      labels: [enhancement]
+  - title: Maintenance
+    semver-increment: patch
+    when:
+      labels: [maintenance]
+  - title: Documentation
+    semver-increment: patch
+    when:
+      labels: [documentation]
+  - title: Dependency updates
+    semver-increment: patch
+    collapse-after: 5
+    when:
+      labels: [dependencies]
+  - type: version-resolver
+    semver-increment: patch
+template: |
+  ## Changes
+
+  $CHANGES

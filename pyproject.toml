@@ -1,0 +1,143 @@
+[project]
+name = "citysports-efc-ble"
+version = "0.1.0"
+description = "Asynchronous Python library for EFC treadmills such as the CITYSPORTS WP9 over Bluetooth Low Energy"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Daan Vervacke", email = "daan.vervacke@proton.me" }]
+requires-python = ">=3.14"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Hardware",
+    "Typing :: Typed",
+]
+keywords = [
+    "citysports",
+    "eqisports",
+    "efc",
+    "treadmill",
+    "walking-pad",
+    "ble",
+    "bluetooth",
+    "bleak",
+    "asyncio",
+    "home-assistant",
+]
+dependencies = [
+    "bleak>=1.1.1,<4",
+    "bleak-retry-connector>=4.7.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-version = ">=0.12.21,<0.13"
+environments = ["platform_system != 'Darwin' or platform_machine != 'x86_64'"]
+
+[tool.uv.build-backend]
+source-include = ["LICENSE"]
+
+[dependency-groups]
+dev = [
+    "bleak-esphome>=4.1.0",
+    "coverage[toml]>=7.15.2",
+    "habluetooth>=7.0.0",
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.8",
+]
+docs = [
+    "furo>=2025.12.19",
+    "sphinx>=9.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/DaanVervacke/citysports-efc-ble"
+Repository = "https://github.com/DaanVervacke/citysports-efc-ble"
+Issues = "https://github.com/DaanVervacke/citysports-efc-ble/issues"
+Documentation = "https://citysports-efc-ble.readthedocs.io/"
+Changelog = "https://github.com/DaanVervacke/citysports-efc-ble/blob/main/CHANGELOG.md"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/citysports_efc_ble"]
+
+[tool.coverage.report]
+fail_under = 98
+exclude_also = ["except _PackageNotFoundError:"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+src = ["src/citysports_efc_ble", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN401",
+    "CPY001",
+    "COM812",
+    "C901",
+    "EM101",
+    "EM102",
+    "FBT001",
+    "FBT002",
+    "FBT003",
+    "FURB110",
+    "D100",
+    "D101",
+    "D103",
+    "D104",
+    "D105",
+    "D106",
+    "D2",
+    "D3",
+    "D4",
+    "ISC001",
+    "PLR0913",
+    "PLR0917",
+    "PLR2004",
+    "RUF036",
+    "RUF006",
+    "TRY003",
+    "TC001",
+    "TC002",
+    "TC003",
+    "TC006",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "ANN",
+    "ARG",
+    "CPY001",
+    "D102",
+    "D107",
+    "FBT",
+    "INP001",
+    "PLC0415",
+    "PLR2004",
+    "S101",
+    "S105",
+    "S106",
+    "SLF001",
+]
+
+"scripts/**" = ["D102", "D107"]
+
+"scripts/check.py" = ["S603", "T201"]
+
+"docs/conf.py" = ["A001", "INP001"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
