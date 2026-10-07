@@ -2,6 +2,10 @@ name: Gate
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
 
 jobs:
   gate:
@@ -23,16 +27,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version: ${{ matrix.python-version }}
-          allow-prereleases: true
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
+          cache-suffix: ${{ matrix.python-version }}-${{ matrix.resolution }}
 
       - name: Sync dependencies
         run: |
@@ -46,8 +48,8 @@ jobs:
 
       - name: Build and verify wheel
         run: |
-          uv build
-          python -c "import glob, sys, zipfile; w = glob.glob('dist/*.whl')[0]; names = zipfile.ZipFile(w).namelist(); sys.exit(0 if 'citysports_efc_ble/py.typed' in names else 'py.typed missing from wheel: ' + w)"
+          uv build --no-sources
+          uv run python -c "import glob, sys, zipfile; w = glob.glob('dist/*.whl')[0]; names = zipfile.ZipFile(w).namelist(); sys.exit(0 if 'citysports_efc_ble/py.typed' in names else 'py.typed missing from wheel: ' + w)"
           uv venv /tmp/wheel-smoke
           uv pip install --python /tmp/wheel-smoke/bin/python dist/*.whl
           cd /tmp && /tmp/wheel-smoke/bin/python -c "from citysports_efc_ble import EfcClient, is_efc_advertisement"

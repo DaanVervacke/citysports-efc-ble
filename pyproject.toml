@@ -4,13 +4,17 @@ version = "0.1.0"
 description = "Asynchronous Python library for EFC treadmills such as the CITYSPORTS WP9 over Bluetooth Low Energy"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Daan Vervacke", email = "daan.vervacke@proton.me" }]
 requires-python = ">=3.14"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: AsyncIO",
     "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Home Automation",
     "Topic :: System :: Hardware",
     "Typing :: Typed",
 ]
@@ -28,7 +32,7 @@ keywords = [
 ]
 dependencies = [
     "bleak>=1.1.1,<4",
-    "bleak-retry-connector>=4.7.1",
+    "bleak-retry-connector>=4.7.1,<5",
 ]
 
 [build-system]
@@ -40,12 +44,13 @@ required-version = ">=0.12.21,<0.13"
 environments = ["platform_system != 'Darwin' or platform_machine != 'x86_64'"]
 
 [tool.uv.build-backend]
-source-include = ["LICENSE"]
+source-include = ["tests/**"]
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.4",
     "bleak-esphome>=4.1.0",
-    "coverage[toml]>=7.15.2",
+    "coverage>=7.15.2",
     "habluetooth>=7.0.0",
     "mypy>=2.3.1",
     "pytest>=9.1.1",
@@ -92,22 +97,13 @@ ignore = [
     "FBT001",
     "FBT002",
     "FBT003",
-    "FURB110",
-    "D100",
-    "D101",
-    "D103",
     "D104",
     "D105",
     "D106",
-    "D2",
-    "D3",
-    "D4",
     "ISC001",
     "PLR0913",
     "PLR0917",
     "PLR2004",
-    "RUF036",
-    "RUF006",
     "TRY003",
     "TC001",
     "TC002",
@@ -119,13 +115,14 @@ ignore = [
 "tests/**" = [
     "ANN",
     "ARG",
-    "CPY001",
+    "D100",
+    "D101",
     "D102",
+    "D103",
     "D107",
     "FBT",
     "INP001",
     "PLC0415",
-    "PLR2004",
     "S101",
     "S105",
     "S106",
@@ -138,6 +135,19 @@ ignore = [
 
 "docs/conf.py" = ["A001", "INP001"]
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.mypy]
 python_version = "3.14"
 strict = true
+files = ["src", "tests", "scripts"]
+warn_unreachable = true
+enable_error_code = [
+    "ignore-without-code",
+    "redundant-expr",
+    "truthy-bool",
+    "possibly-undefined",
+    "exhaustive-match",
+    "deprecated",
+]
