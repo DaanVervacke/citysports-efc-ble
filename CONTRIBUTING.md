@@ -13,6 +13,18 @@ environment:
 uv sync
 ```
 
+The lockfile excludes Intel macOS because the `habluetooth` dev dependency
+ships no Intel macOS wheels.
+
+## Hardware scripts
+
+The scripts under `scripts/` talk to a real treadmill. Run them as modules:
+
+```bash
+uv run python -m scripts.probe_efc
+uv run python -m scripts.drive_efc_client
+```
+
 ## Running the checks
 
 Before opening a pull request, run the full gate:
@@ -30,7 +42,7 @@ ruff check .
 mypy src tests scripts
 coverage run --branch -m pytest
 coverage report
-uv build
+uv build --no-sources
 uv audit
 ```
 

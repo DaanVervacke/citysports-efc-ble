@@ -67,7 +67,9 @@ the 16-bit wraps the EQiSports app expects at 6000 s, 10000 steps and
 ### Controls
 
 Control methods raise `EfcNotReadyError` unless the client was built with
-`allow_control=True` and the session is `READY`.
+`allow_control=True` and the session is `READY`. Without
+`allow_control=True` they raise `EfcControlDisabledError`, a subclass of
+`EfcNotReadyError`.
 
 ```python
 async with EfcClient(BleakTransport(device), allow_control=True) as client:
@@ -88,15 +90,17 @@ async with EfcClient(BleakTransport(device), allow_control=True) as client:
 | `request_sport_record` | | no |
 
 `set_speed` ramps in 0.1 steps from the last reported speed while the belt
-runs, one step every `ramp_interval` seconds (0.3 by default, 0.15 at
+runs, one step every `ramp_interval_seconds` seconds (0.3 by default, 0.15 at
 least), like the EQiSports app. A new control call cancels a running ramp.
 When the belt is not running, the target is written once. The treadmill
 starts the belt at its minimum speed after the countdown, whatever was
 written before.
 
 Speeds and inclines outside the range in the status frame raise
-`EfcValidationError` before anything is sent. All exceptions derive from
-`EfcError`.
+`EfcValidationError` before anything is sent. `connect()` raises
+`EfcConnectionError` when the transport fails and `EfcTimeoutError`, also a
+`TimeoutError`, when the treadmill does not answer. All exceptions derive
+from `EfcError`.
 
 ## Connection loss
 
@@ -139,8 +143,8 @@ through the local Bluetooth adapter when `--proxy` is omitted. It never
 sends control writes.
 
 ```bash
-uv run scripts/probe_efc.py --list-advertisements
-uv run scripts/probe_efc.py --address "AA:BB:CC:DD:EE:FF" \
+uv run python -m scripts.probe_efc --list-advertisements
+uv run python -m scripts.probe_efc --address "AA:BB:CC:DD:EE:FF" \
   --capture-seconds 60 --output /tmp/efc.jsonl
 ```
 
@@ -151,15 +155,15 @@ fake address.
 
 ## Standalone library test
 
-`scripts/test_efc_client.py` drives the library against a real treadmill.
+`scripts/drive_efc_client.py` drives the library against a real treadmill.
 The default run is read-only.
 
 ```bash
-uv run scripts/test_efc_client.py --address "AA:BB:CC:DD:EE:FF" --duration 30
+uv run python -m scripts.drive_efc_client --address "AA:BB:CC:DD:EE:FF" --duration 30
 ```
 
 Connection settings can live in the ignored file
-`scripts/test_efc_client.local.json`:
+`scripts/drive_efc_client.local.json`:
 
 ```json
 {
@@ -184,7 +188,7 @@ uv run python -m scripts.check
 ```
 
 The gate runs a version drift check, format, Ruff, mypy, branch-covered
-tests, coverage, `uv build` and `uv audit` in that order.
+tests, coverage, `uv build --no-sources` and `uv audit` in that order.
 
 ## License
 
