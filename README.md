@@ -13,8 +13,7 @@ Requires Python >= 3.14.
 The protocol facts come from HCI captures of a CITYSPORTS WP9 1400W and
 from the notes in
 [Trught/eqisports_ble_protocol](https://github.com/Trught/eqisports_ble_protocol).
-The library supports EFC only. ES and FTMS treadmills need another library,
-for example [pyftms](https://github.com/dudanov/pyftms) for FTMS.
+The library supports EFC only.
 
 ## Install
 
