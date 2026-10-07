@@ -1,11 +1,8 @@
-from __future__ import annotations
-
 import asyncio
 import json
-import sys
-from importlib.util import module_from_spec, spec_from_file_location
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import pytest
@@ -17,26 +14,18 @@ from citysports_efc_ble.protocol import (
     start_command,
     stop_command,
 )
+from scripts import _efc_common as common
+from scripts import drive_efc_client, probe_efc
 
-from .conftest import DEVICE_INFO, FakeTransport, counters, status
+from .helpers import DEVICE_INFO, FakeTransport, counters, status
 
-SCRIPTS = Path(__file__).parent.parent / "scripts"
 REAL_DEVICE_INFO = bytes.fromhex("1a050c00220017000194cdb172ab3c2a")
 
 
-def _load(name: str) -> ModuleType:
-    spec = spec_from_file_location(name, SCRIPTS / f"{name}.py")
-    assert spec is not None
-    assert spec.loader is not None
-    module = module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-probe = _load("probe_efc")
-library_test = _load("test_efc_client")
-common = probe.common
+@pytest.fixture(autouse=True)
+def _clear_script_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("EFC_PROXY", "EFC_NOISE_PSK", "EFC_DEVICE_ADDRESS"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def test_redact_frame() -> None:
@@ -56,25 +45,24 @@ def test_state_record_redacts_and_names() -> None:
 
 def test_capture_writer(tmp_path: Path) -> None:
     path = tmp_path / "out" / "capture.jsonl"
-    writer = common.CaptureWriter(path)
-    writer.write("rx", REAL_DEVICE_INFO)
-    writer.close()
+    with common.CaptureWriter(path) as writer:
+        writer.write("rx", REAL_DEVICE_INFO)
     writer.close()
     record = json.loads(path.read_text())
     assert record["dir"] == "rx"
     assert record["hex"] == DEVICE_INFO.hex()
-    common.CaptureWriter(None).write("tx", b"\x01")
+    with common.CaptureWriter(None) as empty:
+        empty.write("tx", b"\x01")
 
 
 async def test_capture_transport_records_both_directions(tmp_path: Path) -> None:
     path = tmp_path / "capture.jsonl"
     inner = FakeTransport()
-    writer = common.CaptureWriter(path)
-    async with EfcClient(
-        common.CaptureTransport(inner, writer), write_spacing=0
-    ) as client:
-        assert client.ready
-    writer.close()
+    with common.CaptureWriter(path) as writer:
+        async with EfcClient(
+            common.CaptureTransport(inner, writer), write_spacing_seconds=0
+        ) as client:
+            assert client.ready
     directions = [json.loads(line)["dir"] for line in path.read_text().splitlines()]
     assert directions[0] == "tx"
     assert "rx" in directions
@@ -87,7 +75,9 @@ def test_proxy_host() -> None:
     assert common.proxy_host("http://proxy.local:6053") == "proxy.local"
 
 
-def _sighting(address: str, name: str | None, uuids: tuple[str, ...] = ()) -> Any:
+def _sighting(
+    address: str, name: str | None, uuids: tuple[str, ...] = ()
+) -> common.Sighting:
     return common.Sighting(BLEDevice(address, name, None), name, -60, uuids)
 
 
@@ -97,7 +87,7 @@ async def test_find_treadmill() -> None:
         _sighting("22:22:22:22:22:22", "CITYSPORTS-LINKER"),
     ]
 
-    async def scan(_seconds: float) -> list[Any]:
+    async def scan(_seconds: float) -> list[common.Sighting]:
         return sightings
 
     found = await common.find_treadmill(scan, None, 1)
@@ -118,14 +108,18 @@ def test_load_config(tmp_path: Path) -> None:
     good = tmp_path / "good.json"
     good.write_text('{"address": "AA"}')
     assert common.load_config(good) == {"address": "AA"}
-    bad = tmp_path / "bad.json"
-    bad.write_text("[]")
-    with pytest.raises(TypeError, match="JSON object"):
-        common.load_config(bad)
+    not_object = tmp_path / "list.json"
+    not_object.write_text("[]")
+    with pytest.raises(ValueError, match=r"list\.json must contain a JSON object"):
+        common.load_config(not_object)
+    broken = tmp_path / "broken.json"
+    broken.write_text("{")
+    with pytest.raises(ValueError, match=r"broken\.json is not valid JSON"):
+        common.load_config(broken)
 
 
-def test_probe_config_from_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = probe.config_from_args(
+def test_probe_config_from_args() -> None:
+    config = probe_efc.config_from_args(
         ["--address", "AA", "--capture-seconds", "5", "--list-advertisements"]
     )
     assert config.address == "AA"
@@ -134,42 +128,88 @@ def test_probe_config_from_args(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.proxy is None
 
 
-def test_probe_main_reports_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def failing(_config: Any) -> None:
+def test_probe_main_reports_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def failing(_config: probe_efc.ProbeConfig) -> None:
         raise RuntimeError("no adapter")
 
-    monkeypatch.setattr(probe, "capture", failing)
-    assert probe.main(["--capture-seconds", "0"]) == 1
+    monkeypatch.setattr(probe_efc, "capture", failing)
+    assert probe_efc.main(["--capture-seconds", "0"]) == 1
+    assert "no adapter" in caplog.text
+    assert any(record.exc_info for record in caplog.records)
 
 
 async def test_probe_lists_advertisements(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    async def scan(_seconds: float) -> list[Any]:
+    async def local(_seconds: float) -> list[common.Sighting]:
         return [_sighting("22:22:22:22:22:22", "CITYSPORTS-LINKER")]
 
-    async def local(_seconds: float) -> list[Any]:
-        return await scan(_seconds)
-
-    monkeypatch.setattr(probe.common, "scan_local", local)
-    config = probe.config_from_args(["--list-advertisements"])
+    monkeypatch.setattr(common, "scan_local", local)
+    config = probe_efc.config_from_args(["--list-advertisements"])
     with caplog.at_level("INFO"):
-        await probe.list_advertisements(config)
+        await probe_efc.list_advertisements(config)
     assert "efc=True" in caplog.text
     assert "DEVICE_ADDRESS" in caplog.text
 
 
-def test_library_test_needs_confirmation(tmp_path: Path) -> None:
+async def test_probe_capture_records_frames(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transport = FakeTransport()
+
+    @asynccontextmanager
+    async def scanner(
+        _proxy: str | None, _noise_psk: str | None
+    ) -> AsyncIterator[common.Scanner]:
+        async def scan(_seconds: float) -> list[common.Sighting]:
+            return [_sighting("22:22:22:22:22:22", "CITYSPORTS-LINKER")]
+
+        yield scan
+
+    def bleak_transport(device: BLEDevice) -> FakeTransport:
+        assert device.address == "22:22:22:22:22:22"
+        return transport
+
+    monkeypatch.setattr(common, "open_scanner", scanner)
+    monkeypatch.setattr(probe_efc, "BleakTransport", bleak_transport)
+    output = tmp_path / "capture.jsonl"
+    config = probe_efc.config_from_args(
+        ["--capture-seconds", "0", "--output", str(output)]
+    )
+    await probe_efc.capture(config)
+    assert transport.writes == [device_info_query()]
+    assert transport.disconnect_calls == 1
+    records = [json.loads(line) for line in output.read_text().splitlines()]
+    assert records[0] == {"t": records[0]["t"], "dir": "tx", "hex": "a10500a4"}
+    assert {"dir": "rx", "hex": DEVICE_INFO.hex()} in [
+        {"dir": record["dir"], "hex": record["hex"]} for record in records
+    ]
+
+
+def test_drive_needs_confirmation(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
-        library_test.config_from_args(
+        drive_efc_client.config_from_args(
             ["--controls", "--config", str(tmp_path / "none.json")]
         )
 
 
-def test_library_test_merges_config(tmp_path: Path) -> None:
+def test_drive_rejects_invalid_config(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "local.json"
+    path.write_text("not json")
+    with pytest.raises(SystemExit) as exc_info:
+        drive_efc_client.config_from_args(["--config", str(path)])
+    assert exc_info.value.code == 2
+    assert "local.json is not valid JSON" in capsys.readouterr().err
+
+
+def test_drive_merges_config(tmp_path: Path) -> None:
     path = tmp_path / "local.json"
     path.write_text('{"proxy": "proxy.local", "address": "AA"}')
-    config = library_test.config_from_args(
+    config = drive_efc_client.config_from_args(
         ["--config", str(path), "--address", "BB", "--duration", "1"]
     )
     assert config.proxy == "proxy.local"
@@ -178,7 +218,7 @@ def test_library_test_merges_config(tmp_path: Path) -> None:
     assert not config.controls
 
 
-def _run_config(**changes: Any) -> Any:
+def _run_config(**changes: Any) -> drive_efc_client.RunConfig:
     values: dict[str, Any] = {
         "proxy": None,
         "noise_psk": None,
@@ -191,20 +231,20 @@ def _run_config(**changes: Any) -> Any:
         "run_seconds": 0.0,
     }
     values.update(changes)
-    return library_test.RunConfig(**values)
+    return drive_efc_client.RunConfig(**values)
 
 
-async def test_library_test_read_only(
+async def test_drive_read_only(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     transport = FakeTransport()
-    await library_test.run(_run_config(output=tmp_path / "c.jsonl"), transport)
+    await drive_efc_client.run(_run_config(output=tmp_path / "c.jsonl"), transport)
     assert transport.writes == [device_info_query()]
     lines = capsys.readouterr().out.splitlines()
     assert json.loads(lines[0])["frame"] == "DeviceInfoFrame"
 
 
-async def test_library_test_controls() -> None:
+async def test_drive_controls() -> None:
     transport = FakeTransport()
 
     def answer(data: bytes) -> None:
@@ -213,7 +253,7 @@ async def test_library_test_controls() -> None:
             transport.notify(counters(elapsed=1))
 
     transport.on_write = answer
-    await library_test.run(_run_config(controls=True), transport)
+    await drive_efc_client.run(_run_config(controls=True), transport)
     assert transport.writes[1] == start_command()
     assert speed_command(12) in transport.writes
     assert transport.writes[-1] == stop_command()
@@ -221,26 +261,53 @@ async def test_library_test_controls() -> None:
 
 async def test_exercise_stops_when_belt_never_runs() -> None:
     transport = FakeTransport()
-    monitor = library_test.Monitor()
+    monitor = drive_efc_client.Monitor()
     async with EfcClient(
         transport,
         allow_control=True,
-        write_spacing=0,
+        write_spacing_seconds=0,
         update_callback=monitor.on_update,
     ) as client:
         with pytest.raises(TimeoutError):
-            await library_test.exercise(
+            await drive_efc_client.exercise(
                 client, _run_config(controls=True), monitor, start_timeout=0.05
             )
     assert transport.writes[-1] == stop_command()
 
 
-def test_library_test_main_reports_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+async def test_exercise_keeps_original_error_when_stop_fails(
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    async def failing(_config: Any) -> None:
+    transport = FakeTransport()
+
+    def fail_after_start(data: bytes) -> None:
+        if data == start_command():
+            transport.fail_writes = True
+
+    transport.on_write = fail_after_start
+    monitor = drive_efc_client.Monitor()
+    async with EfcClient(
+        transport,
+        allow_control=True,
+        write_spacing_seconds=0,
+        update_callback=monitor.on_update,
+    ) as client:
+        with pytest.raises(TimeoutError):
+            await drive_efc_client.exercise(
+                client, _run_config(controls=True), monitor, start_timeout=0.05
+            )
+    assert transport.writes[-1] == start_command()
+    assert "Stop command after a failed run failed" in caplog.text
+
+
+def test_drive_main_reports_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def failing(_config: drive_efc_client.RunConfig) -> None:
         await asyncio.sleep(0)
         raise RuntimeError("no adapter")
 
-    monkeypatch.setattr(library_test, "run", failing)
-    assert library_test.main(["--config", str(tmp_path / "none.json")]) == 1
+    monkeypatch.setattr(drive_efc_client, "run", failing)
+    assert drive_efc_client.main(["--config", str(tmp_path / "none.json")]) == 1
+    assert "no adapter" in caplog.text
+    assert any(record.exc_info for record in caplog.records)

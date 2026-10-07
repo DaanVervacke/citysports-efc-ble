@@ -1,49 +1,33 @@
 """Drive the EFC library against a real treadmill, read-only by default."""
 
-from __future__ import annotations
-
 import argparse
 import asyncio
-import importlib.util
 import json
 import logging
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 
 from citysports_efc_ble import (
     BleakTransport,
+    BleTransport,
     EfcClient,
+    EfcError,
     EfcUpdate,
     WorkoutState,
     __version__,
 )
-from citysports_efc_ble.client import BleTransport
+
+from scripts import _efc_common as common
 
 _LOGGER = logging.getLogger(__name__)
-DEFAULT_CONFIG = Path(__file__).resolve().with_name("test_efc_client.local.json")
-
-
-def _load_common() -> ModuleType:
-    """Load the shared helpers that ship next to this script."""
-    path = Path(__file__).resolve().with_name("_efc_common.py")
-    spec = importlib.util.spec_from_file_location("_efc_common", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load shared helpers from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-common = _load_common()
+DEFAULT_CONFIG = Path(__file__).resolve().with_name("drive_efc_client.local.json")
 
 
 @dataclass(frozen=True, slots=True)
 class RunConfig:
-    """Settings for one library test run."""
+    """Settings for one client run."""
 
     proxy: str | None
     noise_psk: str | None
@@ -101,10 +85,22 @@ async def exercise(
             await monitor.running.wait()
         await client.set_speed(config.speed)
         await asyncio.sleep(config.run_seconds)
-    finally:
-        if client.ready:
-            await client.stop()
+    except BaseException:
+        await _stop_after_failure(client)
+        raise
+    if client.ready:
+        await client.stop()
     await asyncio.sleep(config.duration)
+
+
+async def _stop_after_failure(client: EfcClient) -> None:
+    """Send the stop command and log a failure instead of raising it."""
+    if not client.ready:
+        return
+    try:
+        await client.stop()
+    except EfcError:
+        _LOGGER.warning("Stop command after a failed run failed", exc_info=True)
 
 
 async def run(config: RunConfig, transport: BleTransport | None = None) -> None:
@@ -115,9 +111,8 @@ async def run(config: RunConfig, transport: BleTransport | None = None) -> None:
                 scan, config.address, config.scan_seconds
             )
             transport = BleakTransport(device)
-        writer = common.CaptureWriter(config.output)
         monitor = Monitor()
-        try:
+        with common.CaptureWriter(config.output) as writer:
             client = EfcClient(
                 common.CaptureTransport(transport, writer),
                 allow_control=config.controls,
@@ -125,8 +120,6 @@ async def run(config: RunConfig, transport: BleTransport | None = None) -> None:
             )
             async with client:
                 await exercise(client, config, monitor)
-        finally:
-            writer.close()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -150,13 +143,17 @@ def config_from_args(argv: Sequence[str] | None = None) -> RunConfig:
     """Merge the command line with the optional JSON config file.
 
     Raises:
-        SystemExit: ``--controls`` was given without ``--confirm-controls``.
+        SystemExit: ``--controls`` was given without ``--confirm-controls``,
+            or the config file is not a JSON object.
     """
     parser = _parser()
     args = parser.parse_args(argv)
     if args.controls and not args.confirm_controls:
         parser.error("--controls needs --confirm-controls")
-    stored = common.load_config(args.config)
+    try:
+        stored = common.load_config(args.config)
+    except ValueError as err:
+        parser.error(str(err))
     return RunConfig(
         proxy=args.proxy or stored.get("proxy"),
         noise_psk=args.noise_psk or stored.get("noise_psk"),
@@ -171,7 +168,7 @@ def config_from_args(argv: Sequence[str] | None = None) -> RunConfig:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the library test command."""
+    """Parse argv, drive the client and return the exit code."""
     config = config_from_args(argv)
     logging.basicConfig(
         level=logging.INFO,
@@ -183,8 +180,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         sys.stderr.write("Interrupted\n")
         return 1
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.warning("Library test failed: %s", err)
+    except Exception as err:
+        _LOGGER.warning("Client run failed: %s", err, exc_info=True)
         return 1
     return 0
 

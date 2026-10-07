@@ -12,7 +12,7 @@ coverage.xml
 
 docs/_build/
 
-scripts/test_efc_client.local.json
+scripts/drive_efc_client.local.json
 
 *.apk
 btsnoop_hci.log

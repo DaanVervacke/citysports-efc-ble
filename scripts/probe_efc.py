@@ -1,36 +1,19 @@
 """Developer probe that logs EFC treadmill frames without sending controls."""
 
-from __future__ import annotations
-
 import argparse
 import asyncio
-import importlib.util
 import logging
 import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 
 from citysports_efc_ble import BleakTransport, EfcClient, __version__
 
+from scripts import _efc_common as common
+
 _LOGGER = logging.getLogger(__name__)
-
-
-def _load_common() -> ModuleType:
-    """Load the shared helpers that ship next to this script."""
-    path = Path(__file__).resolve().with_name("_efc_common.py")
-    spec = importlib.util.spec_from_file_location("_efc_common", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load shared helpers from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-common = _load_common()
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +51,7 @@ async def list_advertisements(config: ProbeConfig) -> None:
 
 async def capture(config: ProbeConfig) -> None:
     """Connect read-only and log every frame for the capture window."""
-    writer = common.CaptureWriter(config.output)
-    try:
+    with common.CaptureWriter(config.output) as writer:
         async with common.open_scanner(config.proxy, config.noise_psk) as scan:
             device = await common.find_treadmill(
                 scan, config.address, config.scan_seconds
@@ -83,8 +65,6 @@ async def capture(config: ProbeConfig) -> None:
                     client.state.revision,
                 )
                 await asyncio.sleep(config.capture_seconds)
-    finally:
-        writer.close()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -125,7 +105,7 @@ def config_from_args(argv: Sequence[str] | None = None) -> ProbeConfig:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the probe command."""
+    """Parse argv, run the probe and return the exit code."""
     config = config_from_args(argv)
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
@@ -136,8 +116,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         sys.stderr.write("Interrupted\n")
         return 1
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.warning("Probe failed: %s", err)
+    except Exception as err:
+        _LOGGER.warning("Probe failed: %s", err, exc_info=True)
         return 1
     return 0
 

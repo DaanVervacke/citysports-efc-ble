@@ -1,7 +1,5 @@
 """Run the local CI gate in a fixed order."""
 
-from __future__ import annotations
-
 import argparse
 import subprocess
 import sys
@@ -24,7 +22,7 @@ COMMANDS = (
     ("types", ("uv", "run", "mypy", "src", "tests", "scripts")),
     ("tests", ("uv", "run", "coverage", "run", "--branch", "-m", "pytest")),
     ("coverage", ("uv", "run", "coverage", "report", "--show-missing")),
-    ("build", ("uv", "build")),
+    ("build", ("uv", "build", "--no-sources")),
     ("audit", ("uv", "audit", "--locked", "--preview-features", "audit-command")),
 )
 

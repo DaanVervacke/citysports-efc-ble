@@ -1,16 +1,18 @@
 """Shared helpers for the EFC developer scripts."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
+import operator
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, fields
+from enum import Enum
+from functools import reduce
 from pathlib import Path
-from typing import Any, TextIO, cast
+from types import TracebackType
+from typing import Any, Self, TextIO
 from urllib.parse import urlsplit
 
 import habluetooth
@@ -18,18 +20,15 @@ from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak_esphome import APIConnectionManager, ESPHomeDeviceConfig
 from citysports_efc_ble import (
+    BleTransport,
     DeviceInfoFrame,
+    DisconnectedCallback,
     EfcProtocolError,
     EfcState,
+    NotificationCallback,
     is_efc_advertisement,
     parse_frame,
 )
-from citysports_efc_ble.client import (
-    BleTransport,
-    DisconnectedCallback,
-    NotificationCallback,
-)
-from citysports_efc_ble.protocol import xor_checksum
 from habluetooth import BluetoothScanningMode, BluetoothServiceInfoBleak
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,19 +65,19 @@ def redact_frame(data: bytes) -> bytes:
     if not isinstance(frame, DeviceInfoFrame):
         return data
     body = data[:9] + FAKE_SYSTEM_ID + data[15:-1]
-    return body + bytes((xor_checksum(body),))
+    return body + bytes((reduce(operator.xor, body, 0),))
 
 
-def state_record(state: EfcState) -> dict[str, Any]:
+def state_record(state: EfcState) -> dict[str, object]:
     """Return the state as a JSON friendly dict with the system id redacted."""
-    record: dict[str, Any] = {
-        field: getattr(state, field) for field in EfcState.__dataclass_fields__
-    }
+    record: dict[str, object] = {}
+    for field in fields(state):
+        value = getattr(state, field.name)
+        if isinstance(value, Enum):
+            value = value.name
+        record[field.name] = value
     if record["system_id"] is not None:
         record["system_id"] = "11:22:33:44:55:66"
-    for key in ("workout_state", "fault"):
-        if record[key] is not None:
-            record[key] = record[key].name
     return record
 
 
@@ -93,6 +92,19 @@ class CaptureWriter:
             self._file = path.open("a", encoding="utf-8")
         self._start = time.monotonic()
 
+    def __enter__(self) -> Self:
+        """Return the writer itself."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Close the capture file."""
+        self.close()
+
     def write(self, direction: str, payload: bytes) -> None:
         """Log and store one redacted frame."""
         record = {
@@ -106,7 +118,7 @@ class CaptureWriter:
             self._file.flush()
 
     def close(self) -> None:
-        """Close the capture file."""
+        """Close the capture file. Does nothing when no path was given."""
         if self._file is not None:
             self._file.close()
             self._file = None
@@ -155,7 +167,7 @@ class DiscoveryBluetoothManager(habluetooth.BluetoothManager):
     """Bluetooth manager that keeps scanner-owned advertisement data."""
 
     def _discover_service_info(self, service_info: BluetoothServiceInfoBleak) -> None:
-        """Skip the callback dispatch, the scripts read the scanners directly."""
+        """Skip the callback dispatch because the scripts read the scanners directly."""
 
 
 def proxy_host(value: str) -> str:
@@ -189,10 +201,7 @@ def _proxy_scanner(manager: habluetooth.BluetoothManager) -> Scanner:
         deadline = asyncio.get_running_loop().time() + seconds
         while True:
             for scanner in manager.async_current_scanners():
-                discovered = cast(
-                    "dict[str, tuple[BLEDevice, Any]]",
-                    scanner.discovered_devices_and_advertisement_data,
-                )
+                discovered = scanner.discovered_devices_and_advertisement_data
                 for device, advertisement in discovered.values():
                     seen[device.address] = Sighting(
                         device,
@@ -227,10 +236,14 @@ async def open_scanner(
                 scanner.set_requested_mode(BluetoothScanningMode.ACTIVE)
         yield _proxy_scanner(bluetooth_manager)
     finally:
-        with suppress(Exception):
+        try:
             await manager.stop()
-        with suppress(Exception):
+        except Exception:
+            _LOGGER.debug("Stopping the ESPHome connection failed", exc_info=True)
+        try:
             bluetooth_manager.async_stop()
+        except Exception:
+            _LOGGER.debug("Stopping the Bluetooth manager failed", exc_info=True)
 
 
 async def find_treadmill(
@@ -251,10 +264,17 @@ async def find_treadmill(
 
 
 def load_config(path: Path) -> dict[str, Any]:
-    """Load the optional JSON config file, or an empty dict when missing."""
+    """Load the optional JSON config file, or an empty dict when missing.
+
+    Raises:
+        ValueError: The file is not valid JSON or does not hold a JSON object.
+    """
     if not path.exists():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise TypeError(f"{path} must contain a JSON object")
-    return data
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as err:
+        raise ValueError(f"{path} is not valid JSON: {err}") from err
+    if isinstance(data, dict):
+        return data
+    raise ValueError(f"{path} must contain a JSON object")
