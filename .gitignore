@@ -16,3 +16,5 @@ scripts/drive_efc_client.local.json
 
 *.apk
 btsnoop_hci.log
+
+AGENTS.md
