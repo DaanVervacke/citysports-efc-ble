@@ -46,9 +46,11 @@ jobs:
       - name: Run check gate
         run: uv run python -m scripts.check
 
-      - name: Build and verify wheel
+      - name: Build docs
+        run: uv run --group docs sphinx-build -W -b html docs docs/_build
+
+      - name: Verify wheel
         run: |
-          uv build --no-sources
           uv run python -c "import glob, sys, zipfile; w = glob.glob('dist/*.whl')[0]; names = zipfile.ZipFile(w).namelist(); sys.exit(0 if 'citysports_efc_ble/py.typed' in names else 'py.typed missing from wheel: ' + w)"
           uv venv /tmp/wheel-smoke
           uv pip install --python /tmp/wheel-smoke/bin/python dist/*.whl
