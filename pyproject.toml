@@ -133,6 +133,8 @@ ignore = [
 
 "scripts/check.py" = ["S603", "T201"]
 
+"scripts/check_style.py" = ["T201"]
+
 "docs/conf.py" = ["A001", "INP001"]
 
 [tool.ruff.lint.pydocstyle]

@@ -39,6 +39,7 @@ This is the canonical check. It stops at the first failure and runs exactly:
 version drift check
 ruff format --check .
 ruff check .
+python -m scripts.check_style
 mypy src tests scripts
 coverage run --branch -m pytest
 coverage report --show-missing
@@ -49,11 +50,26 @@ uv audit --locked --preview-features audit-command
 Coverage measures branches in `src/citysports_efc_ble` and requires 98%. Your
 pull request must pass this gate completely.
 
-The API documentation is built separately and is not part of the gate:
+The API documentation is not part of the local gate. CI builds it on every
+pull request and fails on any warning. Build it locally with:
 
 ```bash
 uv run --group docs sphinx-build -W -b html docs docs/_build
 ```
+
+## Code style
+
+- No code comments in Python. Pragmas such as `# noqa`, `# type: ignore`
+  and `# pragma: no cover`, and a shebang on the first line, are allowed.
+- Docstrings are the only documentation. They follow the Google convention
+  and use plain, direct language.
+- Docstrings must not contain semicolons, en or em dashes, curly quotes,
+  ellipsis characters, arrows, emoji or non-breaking spaces.
+- Docstrings must not use the words or phrases delve, leverage, robust,
+  streamline, seamless, utilize, "worth noting", "serves as" or "it is
+  important to note".
+
+`python -m scripts.check_style` enforces these rules in the gate.
 
 ## Protocol and behavior changes
 

@@ -19,6 +19,7 @@ COMMANDS = (
     ("version", ("uv", "run", "python", "-c", VERSION_CHECK)),
     ("format", ("uv", "run", "ruff", "format", "--check", ".")),
     ("lint", ("uv", "run", "ruff", "check", ".")),
+    ("style", ("uv", "run", "python", "-m", "scripts.check_style")),
     ("types", ("uv", "run", "mypy", "src", "tests", "scripts")),
     ("tests", ("uv", "run", "coverage", "run", "--branch", "-m", "pytest")),
     ("coverage", ("uv", "run", "coverage", "report", "--show-missing")),
