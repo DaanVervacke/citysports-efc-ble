@@ -55,13 +55,24 @@ returns once a device info frame and a status frame arrived. `client.status`
 then reads `READY`. Every valid frame updates `client.state` and is passed
 to the optional `update_callback` as an `EfcUpdate`.
 
+`EfcClient` takes these keyword-only timing options, all in seconds:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `response_timeout_seconds` | 10 | wait for the first frames in `connect()`, and limit every transport call |
+| `keepalive_seconds` | 30 | interval between keepalive device info queries |
+| `write_spacing_seconds` | 0.15 | minimum time between two writes |
+| `ramp_interval_seconds` | 0.3 | time between the 0.1 steps of a speed ramp, 0.15 at least |
+
+An invalid timing raises `EfcValidationError`.
+
 `EfcState` holds speeds in km/h and distances in metres, also on imperial
 units. The counters (`elapsed_seconds`, `distance_m`, `energy_kcal`,
 `steps`) belong to one workout. The treadmill sends them only while
 someone walks on the belt, freezes them in the summary state and resets
-them in standby. The client continues elapsed time, steps and energy past
-the 16-bit wraps the EQiSports app expects at 6000 s, 10000 steps and
-1000 kcal.
+them in standby. The EQiSports app treats elapsed time as wrapping at
+6000 s, steps at 10000 and energy at 1000 kcal. The client continues these
+counters past such a wrap. No wrap has been captured on real hardware yet.
 
 ### Controls
 
@@ -105,8 +116,9 @@ from `EfcError`.
 
 The client detects a dropped link through the disconnect callback of the
 transport and through a failed write. A keepalive sends the device info
-query every 30 seconds, because the treadmill can stay silent for close to
-a minute in standby. When a session fails:
+query every `keepalive_seconds` seconds (30 by default), because the
+treadmill can stay silent for close to a minute in standby. When a session
+fails:
 
 - pending control calls raise `EfcConnectionError`
 - `client.status` becomes `ConnectionStatus.DISCONNECTED`
@@ -128,10 +140,11 @@ Call `connect()` again to start a new session.
 | out | `A1 03 01 05 A6` | stop |
 | out | `A1 01 02 01 vv xx` | speed in 0.1 km/h (0.1 mph on imperial units) |
 | out | `A1 02 02 01 vv xx` | incline in whole percent |
+| out | `A1 04 05 01 00 00 00 01 A0` | sport record query |
 
 The last byte of every frame is the XOR of all earlier bytes. Writes go to
-`ffeeddcc-bbaa-9988-7766-554433221101` with response, at least 150 ms
-apart. Notifications arrive on `ffeeddcc-bbaa-9988-7766-554433221102`.
+`ffeeddcc-bbaa-9988-7766-554433221101` with response, at least
+`write_spacing_seconds` apart (150 ms by default). Notifications arrive on `ffeeddcc-bbaa-9988-7766-554433221102`.
 Bit 7 of the status byte marks imperial units and bits 0 to 4 hold the
 workout state (`WorkoutState`) or a fault code (`EfcFault`).
 
@@ -149,8 +162,10 @@ uv run python -m scripts.probe_efc --address "AA:BB:CC:DD:EE:FF" \
 
 Add `--proxy` and `--noise-psk` to go through an ESPHome proxy. The flags
 fall back to the `EFC_PROXY`, `EFC_NOISE_PSK` and `EFC_DEVICE_ADDRESS`
-environment variables. Capture files replace the system id with a fixed
-fake address.
+environment variables. `--scan-seconds` sets the scan window (10 by
+default). Capture files replace the system id with a fixed fake address.
+`--list-advertisements` hides Bluetooth addresses unless
+`--show-identities` is given.
 
 ## Standalone library test
 
@@ -162,7 +177,8 @@ uv run python -m scripts.drive_efc_client --address "AA:BB:CC:DD:EE:FF" --durati
 ```
 
 Connection settings can live in the ignored file
-`scripts/drive_efc_client.local.json`:
+`scripts/drive_efc_client.local.json`, or in another file passed with
+`--config`. Command line flags take precedence over the file:
 
 ```json
 {

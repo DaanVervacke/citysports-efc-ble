@@ -49,6 +49,11 @@ A transport failure during ``connect()`` raises
 Every valid frame updates ``client.state`` and is passed to the optional
 ``update_callback`` as an :class:`~citysports_efc_ble.EfcUpdate`.
 
+The keyword-only options ``response_timeout_seconds``, ``keepalive_seconds``,
+``write_spacing_seconds`` and ``ramp_interval_seconds`` tune the timing. The
+:doc:`api` lists their defaults. An invalid timing raises
+:class:`~citysports_efc_ble.EfcValidationError`.
+
 Controls
 --------
 
@@ -77,7 +82,8 @@ Connection loss
 
 The client detects a dropped link through the disconnect callback of the
 transport and through a failed write. A keepalive sends the device info
-query every 30 seconds. When a session fails:
+query every ``keepalive_seconds`` seconds, 30 by default. When a session
+fails:
 
 - pending control calls raise
   :class:`~citysports_efc_ble.EfcConnectionError`

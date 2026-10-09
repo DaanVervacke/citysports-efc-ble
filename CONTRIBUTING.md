@@ -41,9 +41,9 @@ ruff format --check .
 ruff check .
 mypy src tests scripts
 coverage run --branch -m pytest
-coverage report
+coverage report --show-missing
 uv build --no-sources
-uv audit
+uv audit --locked --preview-features audit-command
 ```
 
 Coverage measures branches in `src/citysports_efc_ble` and requires 98%. Your
@@ -76,7 +76,9 @@ and `chore:` subjects. Regenerate the unreleased section with
 release, rename the Unreleased heading to `## [X.Y.Z] - YYYY-MM-DD`, add the
 `[X.Y.Z]:` compare link at the bottom of the file, and point the
 `[Unreleased]:` link at the new tag. Bump the version, commit, and tag
-`vX.Y.Z`.
+`vX.Y.Z`. Push the tag, then publish the GitHub release that Release Drafter
+prepared for it. Publishing the release runs the gate and uploads the build
+to PyPI.
 
 ## Commit style
 

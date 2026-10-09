@@ -10,6 +10,21 @@ Client
    :members:
    :special-members: __init__
 
+Timing defaults
+---------------
+
+Default values of the ``EfcClient`` timing options, in seconds.
+
+.. autodata:: citysports_efc_ble.const.DEFAULT_RESPONSE_TIMEOUT_SECONDS
+
+.. autodata:: citysports_efc_ble.const.DEFAULT_KEEPALIVE_SECONDS
+
+.. autodata:: citysports_efc_ble.const.DEFAULT_WRITE_SPACING_SECONDS
+
+.. autodata:: citysports_efc_ble.const.DEFAULT_RAMP_INTERVAL_SECONDS
+
+.. autodata:: citysports_efc_ble.const.MIN_RAMP_INTERVAL_SECONDS
+
 Transports
 ----------
 
@@ -31,17 +46,22 @@ State
 
 .. autoclass:: citysports_efc_ble.ConnectionStatus
    :members:
+   :undoc-members:
 
 .. autoclass:: citysports_efc_ble.WorkoutState
    :members:
+   :undoc-members:
 
 .. autoclass:: citysports_efc_ble.EfcFault
    :members:
+   :undoc-members:
 
 Frames
 ------
 
 .. autofunction:: citysports_efc_ble.parse_frame
+
+.. autodata:: citysports_efc_ble.models.EfcFrame
 
 .. autoclass:: citysports_efc_ble.StatusFrame
    :members:
@@ -90,6 +110,10 @@ Exceptions
    :show-inheritance:
 
 .. autoclass:: citysports_efc_ble.EfcNotReadyError
+   :members:
+   :show-inheritance:
+
+.. autoclass:: citysports_efc_ble.EfcControlDisabledError
    :members:
    :show-inheritance:
 
