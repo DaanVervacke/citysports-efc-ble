@@ -10,6 +10,7 @@ from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
+from .const import DEFAULT_CONNECT_TIMEOUT_SECONDS
 from .exceptions import EfcConnectionError
 from .transport_types import BleTransport, DisconnectedCallback, NotificationCallback
 
@@ -25,7 +26,7 @@ class BleakTransport(BleTransport):
         self,
         device: BLEDevice,
         *,
-        timeout: float = 30.0,
+        timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         client_factory: type[BleakClient] | None = None,
         ble_device_callback: Callable[[], BLEDevice] | None = None,
     ) -> None:
