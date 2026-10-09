@@ -3,13 +3,11 @@
 import asyncio
 import json
 import logging
-import operator
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, fields
 from enum import Enum
-from functools import reduce
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self, TextIO
@@ -29,11 +27,13 @@ from citysports_efc_ble import (
     is_efc_advertisement,
     parse_frame,
 )
+from citysports_efc_ble.protocol import xor_checksum
 from habluetooth import BluetoothScanningMode, BluetoothServiceInfoBleak
 
 _LOGGER = logging.getLogger(__name__)
 
 FAKE_SYSTEM_ID = bytes.fromhex("665544332211")
+SYSTEM_ID_OFFSET = 9
 DISCOVERY_WARMUP_SECONDS = 5.0
 DISCOVERY_POLL_SECONDS = 0.5
 
@@ -64,8 +64,9 @@ def redact_frame(data: bytes) -> bytes:
         return data
     if not isinstance(frame, DeviceInfoFrame):
         return data
-    body = data[:9] + FAKE_SYSTEM_ID + data[15:-1]
-    return body + bytes((reduce(operator.xor, body, 0),))
+    system_id_end = SYSTEM_ID_OFFSET + len(FAKE_SYSTEM_ID)
+    body = data[:SYSTEM_ID_OFFSET] + FAKE_SYSTEM_ID + data[system_id_end:-1]
+    return body + bytes((xor_checksum(body),))
 
 
 def state_record(state: EfcState) -> dict[str, object]:
