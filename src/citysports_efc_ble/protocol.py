@@ -6,7 +6,7 @@ every earlier byte.
 """
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Final
 
 from .const import (
@@ -45,12 +45,6 @@ from .models import (
 
 __all__ = ["is_efc_advertisement", "parse_frame"]
 
-_PAYLOAD_LENGTHS: Final[Mapping[int, int]] = {
-    FRAME_STATUS: 9,
-    FRAME_COUNTERS: 12,
-    FRAME_SPORT_RECORD: 16,
-    FRAME_DEVICE_INFO: 12,
-}
 _WORKOUT_CODES = frozenset(WorkoutState)
 _FAULT_CODES = frozenset(EfcFault)
 
@@ -174,31 +168,38 @@ def parse_frame(data: bytes) -> EfcFrame:
         raise EfcProtocolError("EFC frame checksum is invalid")
     frame_type = data[1]
     payload = bytes(data[3:-1])
-    expected = _PAYLOAD_LENGTHS.get(frame_type)
-    if expected is None:
+    decoder = _DECODERS.get(frame_type)
+    if decoder is None:
         return UnknownFrame(frame_type, payload)
+    expected, decode = decoder
     if len(payload) != expected:
         raise EfcProtocolError(
             f"EFC frame type 0x{frame_type:02X} has {len(payload)} payload "
             f"bytes, expected {expected}"
         )
-    if frame_type == FRAME_STATUS:
-        return _parse_status(payload)
-    if frame_type == FRAME_COUNTERS:
-        return CountersFrame(
-            elapsed=int.from_bytes(payload[0:2]),
-            distance=int.from_bytes(payload[2:4]),
-            energy=int.from_bytes(payload[4:6]),
-            steps=int.from_bytes(payload[6:8]),
-            heart_rate=payload[8],
-        )
-    if frame_type == FRAME_DEVICE_INFO:
-        return DeviceInfoFrame(
-            manufacturer_code=int.from_bytes(payload[0:2]),
-            model_code=int.from_bytes(payload[2:4]),
-            revision=int.from_bytes(payload[4:6]),
-            system_id=payload[6:12],
-        )
+    return decode(payload)
+
+
+def _parse_counters(payload: bytes) -> CountersFrame:
+    return CountersFrame(
+        elapsed=int.from_bytes(payload[0:2]),
+        distance=int.from_bytes(payload[2:4]),
+        energy=int.from_bytes(payload[4:6]),
+        steps=int.from_bytes(payload[6:8]),
+        heart_rate=payload[8],
+    )
+
+
+def _parse_device_info(payload: bytes) -> DeviceInfoFrame:
+    return DeviceInfoFrame(
+        manufacturer_code=int.from_bytes(payload[0:2]),
+        model_code=int.from_bytes(payload[2:4]),
+        revision=int.from_bytes(payload[4:6]),
+        system_id=payload[6:12],
+    )
+
+
+def _parse_sport_record(payload: bytes) -> SportRecordFrame:
     return SportRecordFrame(
         workout_counter=int.from_bytes(payload[6:8]), payload=payload
     )
@@ -225,6 +226,14 @@ def _parse_status(payload: bytes) -> StatusFrame:
         workout_state=workout_state,
         fault=fault,
     )
+
+
+_DECODERS: Final[Mapping[int, tuple[int, Callable[[bytes], EfcFrame]]]] = {
+    FRAME_STATUS: (9, _parse_status),
+    FRAME_COUNTERS: (12, _parse_counters),
+    FRAME_SPORT_RECORD: (16, _parse_sport_record),
+    FRAME_DEVICE_INFO: (12, _parse_device_info),
+}
 
 
 def is_efc_advertisement(name: str | None, service_uuids: Iterable[str] = ()) -> bool:
