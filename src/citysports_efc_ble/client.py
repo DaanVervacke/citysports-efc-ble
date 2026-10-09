@@ -9,9 +9,10 @@ session fails, a background task tears it down and then calls
 import asyncio
 import logging
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from enum import Enum, auto
 from types import TracebackType
-from typing import Self, TypeAlias
+from typing import Final, Self, TypeAlias
 
 from bleak.exc import BleakError
 
@@ -53,13 +54,7 @@ from .protocol import (
     start_command,
     stop_command,
 )
-from .transport_types import BleTransport as BleTransport  # noqa: PLC0414
-from .transport_types import (
-    DisconnectedCallback as DisconnectedCallback,  # noqa: PLC0414
-)
-from .transport_types import (
-    NotificationCallback as NotificationCallback,  # noqa: PLC0414
-)
+from .transport_types import BleTransport
 
 __all__ = ["ConnectionLostCallback", "EfcClient", "UpdateCallback"]
 
@@ -74,6 +69,37 @@ ConnectionLostCallback: TypeAlias = Callable[[Exception], Awaitable[None] | None
 _LOGGER = logging.getLogger(__name__)
 _RESET_STATES = frozenset((WorkoutState.IDLE, WorkoutState.STANDBY))
 _TRANSPORT_ERRORS = (OSError, BleakError, TimeoutError, EfcError)
+
+
+class _Phase(Enum):
+    """Lifecycle phase of one session.
+
+    ``IDLE`` has no open transport. ``connect()`` moves through ``OPENING``
+    while the transport connects, ``CONNECTED`` while it waits for the first
+    frames and ``READY`` once they arrived. A failure in ``READY`` moves to
+    ``FAILED`` until the recovery task finished its teardown. A teardown for
+    any other reason, including a failure in ``CONNECTED``, runs in
+    ``CLOSING``. Every teardown ends in ``IDLE``. Only ``CONNECTED`` and
+    ``READY`` react to a session failure.
+    """
+
+    IDLE = auto()
+    OPENING = auto()
+    CONNECTED = auto()
+    READY = auto()
+    FAILED = auto()
+    CLOSING = auto()
+
+
+_PHASE_STATUS: Final[Mapping[_Phase, ConnectionStatus]] = {
+    _Phase.IDLE: ConnectionStatus.DISCONNECTED,
+    _Phase.OPENING: ConnectionStatus.DISCONNECTED,
+    _Phase.CONNECTED: ConnectionStatus.CONNECTED,
+    _Phase.READY: ConnectionStatus.READY,
+    _Phase.FAILED: ConnectionStatus.DISCONNECTED,
+    _Phase.CLOSING: ConnectionStatus.DISCONNECTED,
+}
+_LIVE_PHASES = frozenset((_Phase.CONNECTED, _Phase.READY))
 
 
 def _check_timings(
@@ -161,7 +187,7 @@ class EfcClient:
         self._write_spacing = write_spacing_seconds
         self._ramp_interval = ramp_interval_seconds
         self._state = EfcState()
-        self._status = ConnectionStatus.DISCONNECTED
+        self._phase = _Phase.IDLE
         self._lifecycle_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._counters = CounterTracker()
@@ -171,13 +197,10 @@ class EfcClient:
         self._ramp_task: asyncio.Task[None] | None = None
         self._connect_tasks: set[asyncio.Task[None]] = set()
         self._recovery_task: asyncio.Task[None] | None = None
-        self._recovering = False
         self._ready: asyncio.Future[None] | None = None
         self._status_frame: StatusFrame | None = None
         self._session_failure: Exception | None = None
         self._last_write: float | None = None
-        self._transport_open = False
-        self._connecting = False
         self._close_requests = 0
 
     @property
@@ -188,17 +211,17 @@ class EfcClient:
     @property
     def status(self) -> ConnectionStatus:
         """The session status."""
-        return self._status
+        return _PHASE_STATUS[self._phase]
 
     @property
     def connected(self) -> bool:
         """Whether the transport is connected, ready or not."""
-        return self._status is not ConnectionStatus.DISCONNECTED
+        return self._phase in _LIVE_PHASES
 
     @property
     def ready(self) -> bool:
         """Whether the session is ready for controls."""
-        return self._status is ConnectionStatus.READY
+        return self._phase is _Phase.READY
 
     async def connect(self) -> None:
         """Connect and wait for the first device info and status frames.
@@ -434,7 +457,7 @@ class EfcClient:
         while True:
             await self._wait_for_teardown()
             async with self._lifecycle_lock:
-                if self._recovering:
+                if self._phase is _Phase.FAILED:
                     continue
                 if not self.connected:
                     await self._open_session()
@@ -444,11 +467,10 @@ class EfcClient:
         self._reset_session()
         ready = asyncio.get_running_loop().create_future()
         self._ready = ready
-        self._connecting = True
         try:
-            self._transport_open = True
+            self._phase = _Phase.OPENING
             await self.transport.connect(self._on_disconnected)
-            self._status = ConnectionStatus.CONNECTED
+            self._phase = _Phase.CONNECTED
             self._frames = asyncio.Queue()
             self._worker = asyncio.create_task(self._consume(self._frames))
             async with asyncio.timeout(self._response_timeout):
@@ -458,7 +480,7 @@ class EfcClient:
             await self._write(device_info_query())
             await self._wait_ready(ready)
             self._raise_if_session_failed()
-            self._status = ConnectionStatus.READY
+            self._phase = _Phase.READY
             self._keepalive_task = asyncio.create_task(self._keepalive())
         except BaseException as err:
             self._close_requests += 1
@@ -469,8 +491,6 @@ class EfcClient:
             if isinstance(err, Exception) and not isinstance(err, EfcError):
                 raise EfcConnectionError("Connecting to the treadmill failed") from err
             raise
-        finally:
-            self._connecting = False
 
     async def _cancel_connects(self) -> None:
         tasks = [task for task in self._connect_tasks if not task.done()]
@@ -481,7 +501,7 @@ class EfcClient:
 
     async def _wait_for_teardown(self) -> None:
         task = self._recovery_task
-        if self._recovering and task is not None:
+        if self._phase is _Phase.FAILED and task is not None:
             await asyncio.wait((task,))
 
     async def _wait_for_recovery(self) -> None:
@@ -587,7 +607,7 @@ class EfcClient:
         callback = self.update_callback
         if callback is not None:
             try:
-                result = callback(EfcUpdate(self._state, self._status, frame, payload))
+                result = callback(EfcUpdate(self._state, self.status, frame, payload))
                 if result is not None:
                     await result
             except Exception:
@@ -597,11 +617,11 @@ class EfcClient:
         self._fail(EfcConnectionError("The treadmill disconnected"))
 
     def _fail(self, error: Exception) -> None:
-        if self._closing or self._session_failure is not None or not self.connected:
+        if self._closing or not self.connected:
             return
         self._session_failure = error
-        self._status = ConnectionStatus.DISCONNECTED
-        if self._connecting:
+        if self._phase is _Phase.CONNECTED:
+            self._phase = _Phase.CLOSING
             ready = self._ready
             if ready is not None and not ready.done():
                 failure = EfcConnectionError("The session failed while connecting")
@@ -609,7 +629,7 @@ class EfcClient:
                 ready.set_exception(failure)
             return
         _LOGGER.warning("EFC session failed: %s", error)
-        self._recovering = True
+        self._phase = _Phase.FAILED
         self._recovery_task = asyncio.get_running_loop().create_task(
             self._recover(error)
         )
@@ -619,7 +639,8 @@ class EfcClient:
             async with self._lifecycle_lock:
                 await self._teardown()
         finally:
-            self._recovering = False
+            if self._phase is _Phase.FAILED:
+                self._phase = _Phase.CLOSING
         if self._closing:
             return
         callback = self.connection_lost_callback
@@ -633,20 +654,21 @@ class EfcClient:
             _LOGGER.exception("EFC connection lost callback failed")
 
     async def _teardown(self) -> None:
-        self._status = ConnectionStatus.DISCONNECTED
+        transport_open = self._phase is not _Phase.IDLE
+        if self._phase is not _Phase.FAILED and transport_open:
+            self._phase = _Phase.CLOSING
         keepalive = self._keepalive_task
         self._keepalive_task = None
         if keepalive is not None:
             keepalive.cancel()
             await asyncio.gather(keepalive, return_exceptions=True)
         await self._cancel_ramp()
-        if self._transport_open:
+        if transport_open:
             await self._quietly(
                 "stop_notify",
                 lambda: self.transport.stop_notify(NOTIFY_CHARACTERISTIC_UUID),
             )
             await self._quietly("disconnect", self.transport.disconnect)
-            self._transport_open = False
         await self._stop_worker()
         ready = self._ready
         self._ready = None
@@ -655,6 +677,7 @@ class EfcClient:
                 ready.cancel()
             elif not ready.cancelled():
                 ready.exception()
+        self._phase = _Phase.IDLE
 
     async def _quietly(self, label: str, action: Callable[[], Awaitable[None]]) -> None:
         try:

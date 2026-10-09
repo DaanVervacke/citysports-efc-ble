@@ -85,9 +85,9 @@ Frames
 Callbacks
 ---------
 
-.. autodata:: citysports_efc_ble.client.NotificationCallback
+.. autodata:: citysports_efc_ble.transport_types.NotificationCallback
 
-.. autodata:: citysports_efc_ble.client.DisconnectedCallback
+.. autodata:: citysports_efc_ble.transport_types.DisconnectedCallback
 
 .. autodata:: citysports_efc_ble.client.UpdateCallback
 

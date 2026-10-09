@@ -16,7 +16,6 @@ from citysports_efc_ble import (
     StatusFrame,
     WorkoutState,
 )
-from citysports_efc_ble.client import BleTransport
 from citysports_efc_ble.const import (
     NOTIFY_CHARACTERISTIC_UUID,
     WRITE_CHARACTERISTIC_UUID,
@@ -30,9 +29,11 @@ from citysports_efc_ble.protocol import (
     start_command,
     stop_command,
 )
+from citysports_efc_ble.transport_types import BleTransport
 
 from .helpers import (
     DEVICE_INFO,
+    WAIT_SECONDS,
     FakeTransport,
     counters,
     drain,
@@ -263,6 +264,30 @@ async def test_connect_during_recovery_keeps_new_session(
     assert client.ready
     await client.disconnect()
     assert transport.disconnect_calls == 2
+
+
+async def test_connect_after_cancelled_recovery_opens_new_session(
+    transport: FakeTransport,
+) -> None:
+    lost = LostRecorder()
+    client = make_client(transport, connection_lost_callback=lost)
+    await client.connect()
+    transport.hang_stop_notify = True
+    transport.drop()
+    recovery = client._recovery_task
+    assert recovery is not None
+    for _ in range(3):
+        await asyncio.sleep(0)
+    recovery.cancel()
+    await asyncio.gather(recovery, return_exceptions=True)
+    assert not client.connected
+    transport.hang_stop_notify = False
+    async with asyncio.timeout(WAIT_SECONDS):
+        await client.connect()
+    assert client.ready
+    assert transport.connect_calls == 2
+    assert lost.errors == []
+    await client.disconnect()
 
 
 async def test_connect_waiting_on_lock_lets_recovery_run_first(
