@@ -18,3 +18,7 @@ scripts/drive_efc_client.local.json
 btsnoop_hci.log
 
 AGENTS.md
+
+.commandcode/
+reports/
+research_notes/
