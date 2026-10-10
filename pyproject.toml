@@ -1,6 +1,6 @@
 [project]
 name = "citysports-efc-ble"
-version = "0.1.0"
+version = "0.1.1"
 description = "Asynchronous Python library for EFC treadmills such as the CITYSPORTS WP9 over Bluetooth Low Energy"
 readme = "README.md"
 license = "MIT"
