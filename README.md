@@ -47,6 +47,10 @@ asyncio.run(main())
 
 Inside Home Assistant, pass the `BLEDevice` from
 `bluetooth.async_ble_device_from_address` instead of scanning.
+`BleakTransport` connects through
+`bleak_retry_connector.establish_connection`, which sets its own timeout
+for each attempt and retries a failed attempt.
+
 `is_efc_advertisement(name, service_uuids)` returns True for the EFC
 service UUID or a local name starting with `CITYSPORTS`.
 
@@ -59,7 +63,7 @@ to the optional `update_callback` as an `EfcUpdate`.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `response_timeout_seconds` | 10 | wait for the first frames in `connect()`, and limit every transport call |
+| `response_timeout_seconds` | 10 | wait for the first frames in `connect()`, and limit every transport call after the transport connect |
 | `keepalive_seconds` | 30 | interval between keepalive device info queries |
 | `write_spacing_seconds` | 0.15 | minimum time between two writes |
 | `ramp_interval_seconds` | 0.3 | time between the 0.1 steps of a speed ramp, 0.15 at least |
@@ -79,7 +83,8 @@ counters past such a wrap. No wrap has been captured on real hardware yet.
 Control methods raise `EfcNotReadyError` unless the client was built with
 `allow_control=True` and the session is `READY`. Without
 `allow_control=True` they raise `EfcControlDisabledError`, a subclass of
-`EfcNotReadyError`.
+`EfcNotReadyError`. After a failed session they raise `EfcConnectionError`
+until the next `connect()`.
 
 ```python
 async with EfcClient(BleakTransport(device), allow_control=True) as client:
@@ -101,7 +106,8 @@ async with EfcClient(BleakTransport(device), allow_control=True) as client:
 
 `set_speed` ramps in 0.1 steps from the last reported speed while the belt
 runs, one step every `ramp_interval_seconds` seconds (0.3 by default, 0.15 at
-least), like the EQiSports app. A new control call cancels a running ramp.
+least), like the EQiSports app. A later `set_speed`, `start`, `pause`,
+`resume`, `stop` or `disconnect()` cancels a running ramp.
 When the belt is not running, the target is written once. The treadmill
 starts the belt at its minimum speed after the countdown, whatever was
 written before.
@@ -120,18 +126,25 @@ query every `keepalive_seconds` seconds (30 by default), because the
 treadmill can stay silent for close to a minute in standby. When a session
 fails:
 
-- pending control calls raise `EfcConnectionError`
+- pending and later control calls raise `EfcConnectionError`
 - `client.status` becomes `ConnectionStatus.DISCONNECTED`
 - an optional `connection_lost_callback` receives the exception
 
 Call `connect()` again to start a new session.
+
+## Logging
+
+The library logs under the `citysports_efc_ble` logger. Dropped frames
+and session failures log as warnings. A failing update or connection lost
+callback logs as an error with its traceback. Transport errors during
+teardown log at debug level.
 
 ## Protocol
 
 | Direction | Frame | Meaning |
 | --- | --- | --- |
 | in | `1A 01 09` | speed range, incline range, speed, incline, status byte |
-| in | `1A 02 0C` | elapsed s, distance m, energy 0.1 kcal, steps, heart rate |
+| in | `1A 02 0C` | elapsed s, distance m (0.001 mile on imperial units), energy 0.1 kcal, steps, heart rate |
 | in | `1A 05 0C` | manufacturer, model, revision, system id |
 | in | `1A 04 10` | sport record, workout counter at payload bytes 6 and 7 |
 | out | `A1 05 00 A4` | device info query |
@@ -144,7 +157,8 @@ Call `connect()` again to start a new session.
 
 The last byte of every frame is the XOR of all earlier bytes. Writes go to
 `ffeeddcc-bbaa-9988-7766-554433221101` with response, at least
-`write_spacing_seconds` apart (150 ms by default). Notifications arrive on `ffeeddcc-bbaa-9988-7766-554433221102`.
+`write_spacing_seconds` apart (150 ms by default). Notifications arrive on
+`ffeeddcc-bbaa-9988-7766-554433221102`.
 Bit 7 of the status byte marks imperial units and bits 0 to 4 hold the
 workout state (`WorkoutState`) or a fault code (`EfcFault`).
 
@@ -163,7 +177,9 @@ uv run python -m scripts.probe_efc --address "AA:BB:CC:DD:EE:FF" \
 Add `--proxy` and `--noise-psk` to go through an ESPHome proxy. The flags
 fall back to the `EFC_PROXY`, `EFC_NOISE_PSK` and `EFC_DEVICE_ADDRESS`
 environment variables. `--scan-seconds` sets the scan window (10 by
-default). Capture files replace the system id with a fixed fake address.
+default, plus a warm-up of up to 5 s through a proxy) and
+`--capture-seconds` the capture window (30 by default).
+Capture files replace the system id with a fixed fake address.
 `--list-advertisements` hides Bluetooth addresses unless
 `--show-identities` is given.
 
@@ -188,9 +204,16 @@ Connection settings can live in the ignored file
 }
 ```
 
+The script prints the state after every frame as one JSON line on stdout
+and logs to stderr. `--output` appends the redacted frames to a capture
+file in the probe format. A read-only run listens for `--duration` seconds
+(30 by default).
+
 Controls need `--controls` and `--confirm-controls`. With them the script
-starts the belt, ramps to `--speed`, waits `--run-seconds` and stops. Keep
-the belt empty or stand on it yourself, and keep the safety key attached.
+starts the belt, waits up to 10 s for it to run, ramps to `--speed` (2.0
+km/h by default), waits `--run-seconds` (10 by default), stops and then
+listens for `--duration` seconds. Keep the belt empty or stand on it
+yourself, and keep the safety key attached.
 
 ## Development
 
@@ -202,8 +225,9 @@ uv sync
 uv run python -m scripts.check
 ```
 
-The gate runs a version drift check, format, Ruff, mypy, branch-covered
-tests, coverage, `uv build --no-sources` and `uv audit` in that order.
+The gate runs a version drift check, format, Ruff, the comment and
+docstring check, mypy, branch-covered tests, coverage,
+`uv build --no-sources` and `uv audit` in that order.
 
 ## License
 

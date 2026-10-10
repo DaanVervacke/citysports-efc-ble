@@ -25,7 +25,8 @@ class EfcError(Exception):
 class EfcConnectionError(EfcError):
     """The session failed, or a write could not be sent.
 
-    The original transport error is chained as ``__cause__``.
+    When a transport error caused it, that error is chained as
+    ``__cause__``.
     """
 
 

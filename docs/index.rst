@@ -61,7 +61,9 @@ Control methods raise :class:`~citysports_efc_ble.EfcNotReadyError` unless
 the client was built with ``allow_control=True`` and the session is
 ``READY``. Without ``allow_control=True`` they raise
 :class:`~citysports_efc_ble.EfcControlDisabledError`, a subclass of
-``EfcNotReadyError``.
+``EfcNotReadyError``. After a failed session they raise
+:class:`~citysports_efc_ble.EfcConnectionError` until the next
+``connect()``.
 
 .. code-block:: python
 
@@ -72,10 +74,11 @@ the client was built with ``allow_control=True`` and the session is
        await client.stop()
 
 ``set_speed`` ramps in 0.1 steps from the last reported speed while the
-belt runs, one step every ``ramp_interval_seconds`` seconds. A new control call
+belt runs, one step every ``ramp_interval_seconds`` seconds. A later
+``set_speed``, ``start``, ``pause``, ``resume``, ``stop`` or ``disconnect()``
 cancels a running ramp. ``pause``, ``resume``, ``set_incline`` and
-``request_sport_record`` come from the EQiSports app and are untested on
-real hardware.
+``request_sport_record`` follow the published Trught notes and are untested
+on real hardware.
 
 Connection loss
 ---------------
@@ -85,7 +88,7 @@ transport and through a failed write. A keepalive sends the device info
 query every ``keepalive_seconds`` seconds, 30 by default. When a session
 fails:
 
-- pending control calls raise
+- pending and later control calls raise
   :class:`~citysports_efc_ble.EfcConnectionError`
 - ``client.status`` becomes ``DISCONNECTED``
 - the optional ``connection_lost_callback`` receives the exception

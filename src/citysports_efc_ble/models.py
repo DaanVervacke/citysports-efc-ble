@@ -98,7 +98,8 @@ class StatusFrame:
 class CountersFrame:
     """Decoded ``1A 02`` counters frame, in wire units.
 
-    ``energy`` is in 0.1 kcal. ``distance`` is in metres on metric units.
+    ``energy`` is in 0.1 kcal. ``distance`` is in metres on metric units
+    and in 0.001 mile on imperial units.
     The client corrects counter wraps before it applies the frame, so the
     values can exceed 16 bits after correction.
     """

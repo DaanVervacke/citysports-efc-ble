@@ -34,12 +34,14 @@ class BleakTransport(BleTransport):
 
         Args:
             device: The BLE device to connect to.
-            timeout: Connection timeout in seconds.
+            timeout: Timeout in seconds passed to the Bleak client.
+                ``establish_connection`` sets its own timeout for each
+                connect attempt, so this value does not limit the connect.
             client_factory: The Bleak client class. Defaults to
                 ``BleakClientWithServiceCache``.
-            ble_device_callback: Returns the latest ``BLEDevice`` for
-                connection retries. Home Assistant passes a lookup in its
-                Bluetooth manager here.
+            ble_device_callback: Returns the latest ``BLEDevice``. It is
+                passed to ``establish_connection``, which accepts it but
+                does not call it in bleak-retry-connector 4.7.1.
         """
         self.device = device
         self.timeout = timeout

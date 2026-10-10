@@ -178,7 +178,7 @@ def proxy_host(value: str) -> str:
 
 
 Scanner = Callable[[float], Awaitable[list[Sighting]]]
-"""Coroutine function that scans for the given seconds."""
+"""Coroutine function that scans for at least the given seconds."""
 
 
 async def scan_local(seconds: float) -> list[Sighting]:

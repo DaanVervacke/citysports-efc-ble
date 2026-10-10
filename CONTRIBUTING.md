@@ -59,8 +59,10 @@ uv run --group docs sphinx-build -W -b html docs docs/_build
 
 ## Code style
 
-- No code comments in Python. Pragmas such as `# noqa`, `# type: ignore`
-  and `# pragma: no cover`, and a shebang on the first line, are allowed.
+- No code comments in any language, neither full-line nor trailing. Pragmas
+  such as `# noqa`, `# type: ignore`, `# pragma: no cover` and
+  `# shellcheck:`, a shebang on the first line, and non-code files such as
+  `.md` and `.json` are exempt.
 - Docstrings are the only documentation. They follow the Google convention
   and use plain, direct language.
 - Docstrings must not contain semicolons, en or em dashes, curly quotes,
@@ -69,7 +71,15 @@ uv run --group docs sphinx-build -W -b html docs docs/_build
   streamline, seamless, utilize, "worth noting", "serves as" or "it is
   important to note".
 
-`python -m scripts.check_style` enforces these rules in the gate.
+`python -m scripts.check_style` enforces these rules for Python files in
+the gate.
+
+The optional pre-commit hooks in `.pre-commit-config.yaml` run
+`ruff --fix` and `ruff format` on each commit:
+
+```bash
+uvx pre-commit install
+```
 
 ## Protocol and behavior changes
 

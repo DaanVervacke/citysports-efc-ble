@@ -151,8 +151,9 @@ class EfcClient:
         Args:
             transport: BLE transport that owns the GATT connection.
             response_timeout_seconds: Seconds ``connect()`` waits for the
-                device info and status frames. Every transport call is
-                also limited to this time.
+                device info and status frames. Every transport call after
+                the transport connect is also limited to this time. The
+                transport sets its own connect timeout.
             keepalive_seconds: Interval between keepalive device info
                 queries.
             write_spacing_seconds: Minimum seconds between two writes. The
