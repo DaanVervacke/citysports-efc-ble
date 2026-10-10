@@ -11,6 +11,7 @@ Before 1.0, breaking changes ship as minor bumps.
 ### Documentation
 
 - Sync the README, API reference and contributing guide
+- Correct the timeout, error and script notes
 
 ### Maintenance
 
